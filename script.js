@@ -1,7 +1,3 @@
-/* ==================================================================
-   ASM & PLD Studio — application logic
-   BUILD: pla-banner-v6
-   ================================================================== */
 "use strict";
 
 const $  = (s, r = document) => r.querySelector(s);
@@ -172,7 +168,8 @@ function termString(term, nVars){
   for (let i = 0; i < nVars; i++){
     const b = 1 << (nVars - 1 - i);
     if (term.mask & b) continue;
-    parts.push((term.bits & b) ? VAR_NAMES[i] : "~" + VAR_NAMES[i]);
+    // Use single quote for negation
+    parts.push((term.bits & b) ? VAR_NAMES[i] : VAR_NAMES[i] + "'");
   }
   return parts.length ? parts.join("·") : "1";
 }
@@ -181,7 +178,7 @@ function sopString(cover, nVars){
   return cover.map(p => termString(p, nVars)).join("  +  ");
 }
 function mintermList(minterms){
-  return minterms.length ? `Σm(${minterms.join(",")})` : "—";
+  return minterms.length ? `Σm(${minterms.join(",")})` : "-";
 }
 
 /* ==================================================================
@@ -279,7 +276,7 @@ function renderKmap(title, nVars, values){
   const bitLabel = (v, bits) => {
     let s = "";
     for (let i = bits-1; i >= 0; i--) s += ((v >> i) & 1);
-    return s || "–";
+    return s || "'";
   };
   let html = `<div class="kmap-block"><div class="kmap-label">${esc(title)}</div>`;
   html += '<table class="kmap"><thead><tr>';
@@ -301,7 +298,7 @@ function renderKmap(title, nVars, values){
   return html;
 }
 
-function renderPLATable(nVars, functions, terms){
+function renderPLATable(nVars, functions, terms, mode){
   const el = $("#pldTable");
   if (!terms.length){
     el.innerHTML = '<div class="empty">No product terms to display.</div>';
@@ -310,8 +307,14 @@ function renderPLATable(nVars, functions, terms){
   let html = '<table class="tt"><thead><tr>';
   html += '<th>Sr.</th><th>Product term</th>';
   for (let i = 0; i < nVars; i++) html += `<th>${VAR_NAMES[i]}</th>`;
-  for (const f of functions) html += `<th class="out">${esc(f.name)}</th>`;
+  
+  if (mode === "pal") {
+    html += '<th class="out">Target Output</th>';
+  } else {
+    for (const f of functions) html += `<th class="out">${esc(f.name)}</th>`;
+  }
   html += "</tr></thead><tbody>";
+  
   terms.forEach((t, i) => {
     html += `<tr><td class="idx">${i+1}</td>`;
     html += `<td class="term">${esc(termString(t, nVars))}</td>`;
@@ -320,8 +323,19 @@ function renderPLATable(nVars, functions, terms){
       if (t.mask & b) html += `<td class="minus">–</td>`;
       else html += `<td class="${t.bits & b ? "one" : "zero"}">${t.bits & b ? 1 : 0}</td>`;
     }
-    for (let fi = 0; fi < functions.length; fi++){
-      html += t.covers.has(fi) ? `<td class="one">1</td>` : `<td class="minus">–</td>`;
+    
+    if (mode === "pal") {
+      html += `<td class="one">${esc(functions[t.output].name)}</td>`;
+    } else {
+      for (let fi = 0; fi < functions.length; fi++){
+        if (mode === "prom") {
+          // PROM checks if the minterm is part of the function
+          html += functions[fi].minterms.includes(t.bits) ? `<td class="one">1</td>` : `<td class="minus">–</td>`;
+        } else {
+          // PLA checks if the term covers the output
+          html += t.covers.has(fi) ? `<td class="one">1</td>` : `<td class="minus">–</td>`;
+        }
+      }
     }
     html += "</tr>";
   });
@@ -330,20 +344,9 @@ function renderPLATable(nVars, functions, terms){
 }
 
 /* ==================================================================
-   ★★★★★  PLA CIRCUIT — v6  ★★★★★
-
-   Layout (top → bottom):
-     1. INPUT BUFFERS header + rail labels + input rails + buffers
-     2. Product-term verticals — TOP segment (with input cross-points)
-     3. ══════ AND PLANE banner (a horizontal band, NO lines cross) ══════
-     4. Product-term verticals — BOTTOM segment
-     5. AND gates + product-term name labels
-     6. AND-gate output verticals — TOP segment
-     7. ══════ OR PLANE banner (a horizontal band, NO lines cross) ══════
-     8. AND-gate output verticals — BOTTOM segment (with OR cross-points)
-     9. OR lines + shield OR gates + LONG arrows → F1, F2, ...
+   ★★★★★  PLA CIRCUIT — Multi-Mode  ★★★★★
    ================================================================== */
-function renderPLACircuit(nVars, functions, terms){
+function renderPLACircuit(nVars, functions, terms, mode){
   const el = $("#pldCircuit");
   if (!terms.length){
     el.innerHTML = '<div class="empty">No circuit to draw.</div>';
@@ -355,15 +358,15 @@ function renderPLACircuit(nVars, functions, terms){
   const nOut   = functions.length;
 
   /* ---------- horizontal geometry ---------- */
-  const padL = 90;                 // space for buffer labels
-  const lineGap  = 26;             // spacing between input rails
-  const termGap  = 80;             // spacing between product-term columns
+  const padL = 90;
+  const lineGap  = 26;
+  const termGap  = 80;
   const andGateW = 44, andGateH = 34;
   const orGap    = 42;
 
   const x0 = padL + 90;
   const termX = j => x0 + j * termGap;
-  const railStart = 30;            // where the input rails begin on the left
+  const railStart = 30;
   const orGateX = termX(nTerms - 1) + 60;
 
   /* ---------- vertical geometry with banner bands ---------- */
@@ -376,7 +379,6 @@ function renderPLACircuit(nVars, functions, terms){
   const AND_BANNER_TOP = lastRailY + 28;
   const AND_BANNER_BOT = AND_BANNER_TOP + AND_BANNER_H;
 
-  // product-term verticals resume below the banner
   const VERTICAL_RESUME_Y = AND_BANNER_BOT + 22;
 
   // AND gates
@@ -394,7 +396,7 @@ function renderPLACircuit(nVars, functions, terms){
   const orY = k => OR_LINE_Y0 + k * orGap;
 
   /* ---------- overall canvas ---------- */
-  const svgW = orGateX + 260;      // extended canvas for LONG arrows + labels
+  const svgW = orGateX + 260;
   const svgH = orY(nOut - 1) + 80;
   const railEnd = svgW - 40;
 
@@ -421,7 +423,8 @@ function renderPLACircuit(nVars, functions, terms){
                        stroke="#3a5573" stroke-width="1"/>`);
     const varIdx = Math.floor(i / 2);
     const isComp = i % 2 === 1;
-    const label = isComp ? VAR_NAMES[varIdx] + "̄" : VAR_NAMES[varIdx];
+    // Use single quote for negation in labels
+    const label = isComp ? VAR_NAMES[varIdx] + "'" : VAR_NAMES[varIdx];
     parts.push(`<text x="${railStart - 6}" y="${y + 4}" text-anchor="end"
                        font-size="12" font-weight="700" fill="#e2b968">${label}</text>`);
   }
@@ -435,29 +438,32 @@ function renderPLACircuit(nVars, functions, terms){
 
   /* =========================================================
      SECTION 2a — PRODUCT-TERM VERTICALS (TOP SEGMENT)
-     from top rail down to AND_PLANE banner top
      ========================================================= */
   for (let j = 0; j < nTerms; j++){
     const x = termX(j);
     parts.push(`<line x1="${x}" y1="${lineY(0) - 4}" x2="${x}" y2="${AND_BANNER_TOP}"
                        stroke="#4fd1e6" stroke-width="1.1" opacity="0.75"/>`);
-    for (let i = 0; i < nLines; i++){
-      const varIdx = Math.floor(i / 2);
-      const isComp = i % 2 === 1;
-      const b = 1 << (nVars-1-varIdx);
-      let uses = false;
-      if (!(terms[j].mask & b)){
-        const want = (terms[j].bits & b) ? 0 : 1;
-        if (want === (isComp ? 1 : 0)) uses = true;
-      }
-      if (uses){
-        parts.push(`<circle cx="${x}" cy="${lineY(i)}" r="3.4" fill="#e2b968"/>`);
+    
+    // PROM has a fixed decoder (no programmable dots)
+    if (mode !== "prom") {
+      for (let i = 0; i < nLines; i++){
+        const varIdx = Math.floor(i / 2);
+        const isComp = i % 2 === 1;
+        const b = 1 << (nVars-1-varIdx);
+        let uses = false;
+        if (!(terms[j].mask & b)){
+          const want = (terms[j].bits & b) ? 0 : 1;
+          if (want === (isComp ? 1 : 0)) uses = true;
+        }
+        if (uses){
+          parts.push(`<circle cx="${x}" cy="${lineY(i)}" r="3.4" fill="#e2b968"/>`);
+        }
       }
     }
   }
 
   /* =========================================================
-     AND PLANE BANNER — a clean horizontal band
+     AND PLANE BANNER
      ========================================================= */
   const andBannerLeft  = termX(0) - 40;
   const andBannerRight = termX(nTerms - 1) + 40;
@@ -469,14 +475,14 @@ function renderPLACircuit(nVars, functions, terms){
                     x2="${andBannerRight}" y2="${AND_BANNER_BOT}"
                     stroke="rgba(74,222,128,0.55)" stroke-width="1.2"
                     stroke-dasharray="6 5"/>`);
+  const andBannerText = mode === "prom" ? "FIXED AND ARRAY (DECODER)" : "AND PLANE";
   parts.push(`<text x="${(andBannerLeft + andBannerRight) / 2}"
                     y="${AND_BANNER_TOP + AND_BANNER_H/2 + 5}"
                     text-anchor="middle" font-size="12" font-weight="800"
-                    letter-spacing="5" fill="#4ade80">AND PLANE</text>`);
+                    letter-spacing="5" fill="#4ade80">${andBannerText}</text>`);
 
   /* =========================================================
      SECTION 2b — PRODUCT-TERM VERTICALS (BOTTOM SEGMENT)
-     from AND_PLANE banner bottom down to AND gates
      ========================================================= */
   for (let j = 0; j < nTerms; j++){
     const x = termX(j);
@@ -491,17 +497,20 @@ function renderPLACircuit(nVars, functions, terms){
     const cx = termX(j);
     const y  = AND_GATE_TOP;
     const xL = cx - andGateW/2;
+    
+    // Color-code AND gates by output in PAL mode to show fixed OR
+    const gateColor = mode === "pal" ? `hsl(${terms[j].output * 137.5}, 70%, 60%)` : "#4ade80";
+    
     parts.push(`<path d="M ${xL} ${y} L ${cx} ${y}
                         A ${andGateW/2} ${andGateH/2} 0 0 1 ${cx} ${y + andGateH}
                         L ${xL} ${y + andGateH} Z"
-                       fill="rgba(74,222,128,0.08)" stroke="#4ade80" stroke-width="1.4"/>`);
+                       fill="rgba(74,222,128,0.08)" stroke="${gateColor}" stroke-width="1.4"/>`);
     parts.push(`<text x="${cx}" y="${AND_OUT_LABEL_Y}" text-anchor="middle"
-                       font-size="11" fill="#4ade80" font-weight="700">${esc(termString(terms[j], nVars))}</text>`);
+                       font-size="11" fill="${gateColor}" font-weight="700">${esc(termString(terms[j], nVars))}</text>`);
   }
 
   /* =========================================================
      SECTION 3a — AND-GATE OUTPUT VERTICALS (TOP SEGMENT)
-     from AND gate bottom down to OR_PLANE banner top
      ========================================================= */
   for (let j = 0; j < nTerms; j++){
     const cx = termX(j);
@@ -510,7 +519,7 @@ function renderPLACircuit(nVars, functions, terms){
   }
 
   /* =========================================================
-     OR PLANE BANNER — a clean horizontal band
+     OR PLANE BANNER
      ========================================================= */
   const orBannerLeft  = termX(0) - 40;
   const orBannerRight = orGateX + 60;
@@ -522,14 +531,14 @@ function renderPLACircuit(nVars, functions, terms){
                     x2="${orBannerRight}" y2="${OR_BANNER_BOT}"
                     stroke="rgba(91,141,239,0.55)" stroke-width="1.2"
                     stroke-dasharray="6 5"/>`);
+  const orBannerText = mode === "pal" ? "FIXED OR ARRAY" : "OR PLANE";
   parts.push(`<text x="${(orBannerLeft + orBannerRight) / 2}"
                     y="${OR_BANNER_TOP + OR_BANNER_H/2 + 5}"
                     text-anchor="middle" font-size="12" font-weight="800"
-                    letter-spacing="5" fill="#5b8def">OR PLANE</text>`);
+                    letter-spacing="5" fill="#5b8def">${orBannerText}</text>`);
 
   /* =========================================================
      SECTION 3b — AND-GATE OUTPUT VERTICALS (BOTTOM SEGMENT)
-     from OR_PLANE banner bottom down to last OR line
      ========================================================= */
   for (let j = 0; j < nTerms; j++){
     const cx = termX(j);
@@ -541,18 +550,33 @@ function renderPLACircuit(nVars, functions, terms){
      OR LINES + cross-points + shield OR gates + LONG output arrows
      ========================================================= */
   const arrowStart = orGateX + 46;
-  const arrowEnd   = arrowStart + 120;      // 120 px arrow — clearly separated
+  const arrowEnd   = arrowStart + 120;
   const labelX     = arrowEnd + 14;
 
   for (let k = 0; k < nOut; k++){
     const y = orY(k);
     parts.push(`<line x1="${termX(0) - 20}" y1="${y}" x2="${orGateX}" y2="${y}"
                        stroke="#5b8def" stroke-width="1.2"/>`);
+                       
     for (let j = 0; j < nTerms; j++){
-      if (terms[j].covers.has(k)){
-        parts.push(`<circle cx="${termX(j)}" cy="${y}" r="3.4" fill="#e2b968"/>`);
+      if (mode === "pal") {
+        // PAL: Fixed OR connections (only to the designated output)
+        if (terms[j].output === k) {
+          parts.push(`<circle cx="${termX(j)}" cy="${y}" r="3.4" fill="#e2b968"/>`);
+        }
+      } else if (mode === "prom") {
+        // PROM: Programmable OR connections
+        if (functions[k].minterms.includes(terms[j].bits)) {
+          parts.push(`<circle cx="${termX(j)}" cy="${y}" r="3.4" fill="#e2b968"/>`);
+        }
+      } else {
+        // PLA: Programmable OR connections
+        if (terms[j].covers.has(k)) {
+          parts.push(`<circle cx="${termX(j)}" cy="${y}" r="3.4" fill="#e2b968"/>`);
+        }
       }
     }
+    
     const gx = orGateX, gy = y - 12;
     parts.push(`<path d="M ${gx} ${gy} Q ${gx+34} ${gy} ${gx+46} ${gy+12}
                         Q ${gx+34} ${gy+24} ${gx} ${gy+24}
@@ -585,22 +609,53 @@ function renderExpressions(nVars, functions, perFunctionCovers){
 
 function synthesizePLD(){
   const nVars = pldState.nVars;
+  const mode = $("#pldType").value;
   const maxM = (1 << nVars) - 1;
+  
   pldState.functions.forEach(f => {
     f.minterms = [...new Set(f.minterms)]
       .filter(m => m >= 0 && m <= maxM).sort((a,b)=>a-b);
   });
-  const perFunctionCovers = pldState.functions.map(f =>
-    coverMinterms(quineMcCluskey(f.minterms, nVars), f.minterms));
-  const sharedTerms = optimizePLA(pldState.functions, nVars);
+
+  let perFunctionCovers = [];
+  let sharedTerms = [];
+
+  if (mode === "pla") {
+    perFunctionCovers = pldState.functions.map(f =>
+      coverMinterms(quineMcCluskey(f.minterms, nVars), f.minterms));
+    sharedTerms = optimizePLA(pldState.functions, nVars);
+  } else if (mode === "pal") {
+    // PAL: Minimize independently, fixed OR arrays (no sharing)
+    perFunctionCovers = pldState.functions.map(f =>
+      coverMinterms(quineMcCluskey(f.minterms, nVars), f.minterms));
+    sharedTerms = [];
+    pldState.functions.forEach((f, fi) => {
+      perFunctionCovers[fi].forEach(term => {
+        sharedTerms.push({ ...term, output: fi });
+      });
+    });
+  } else if (mode === "prom") {
+    // PROM: Fixed AND array (all minterms), programmable OR
+    const total = 1 << nVars;
+    sharedTerms = [];
+    for (let m = 0; m < total; m++) {
+      sharedTerms.push({ bits: m, mask: 0, cover: new Set([m]) });
+    }
+    perFunctionCovers = pldState.functions.map(f => {
+      return f.minterms.map(m => ({ bits: m, mask: 0, cover: new Set([m]) }));
+    });
+  }
+
   const rows = [];
   const total = 1 << nVars;
   for (let m = 0; m < total; m++){
     const outs = pldState.functions.map(f => f.minterms.includes(m) ? 1 : 0);
     rows.push({ m, out: outs });
   }
+
   renderExpressions(nVars, pldState.functions, perFunctionCovers);
   renderTruthTable(nVars, pldState.functions, rows);
+
   let kmapHtml = "";
   pldState.functions.forEach(f => {
     const values = [];
@@ -608,8 +663,9 @@ function synthesizePLD(){
     kmapHtml += renderKmap(f.name, nVars, values);
   });
   $("#pldKmap").innerHTML = kmapHtml;
-  renderPLATable(nVars, pldState.functions, sharedTerms);
-  renderPLACircuit(nVars, pldState.functions, sharedTerms);
+
+  renderPLATable(nVars, pldState.functions, sharedTerms, mode);
+  renderPLACircuit(nVars, pldState.functions, sharedTerms, mode);
 }
 
 function initPLD(){
@@ -1064,7 +1120,7 @@ function init(){
   initPLD();
   renderExamples();
   synthesizePLD();
-  console.log("ASM & PLD Studio — pla-banner-v6 loaded");
+  console.log("ASM & PLD Studio — pla-pal-prom-v7 loaded");
 }
 
 document.addEventListener("DOMContentLoaded", init);
